@@ -328,11 +328,11 @@
         let db = JSON.parse(localStorage.getItem('puntoPrismaDB_v17')) || mockDataPrueba;
         if (!db.config) db.config = { masterPin: '0000' };
 
-        // 🔗 Canal receptor de empleados en tiempo real desde Firebase
-        window.recibirEmpleadosNube = function(empleadosActualizados) {
-            db.empleados = empleadosActualizados;
+        // 🔗 Canal receptor global universal en tiempo real
+        window.actualizarModuloLocal = function(modulo, datos) {
+            db[modulo] = datos;
             localStorage.setItem('puntoPrismaDB_v17', JSON.stringify(db));
-            if(document.getElementById('listaEmpleados')) render();
+            render();
         };
         
         let usuarioActual = JSON.parse(sessionStorage.getItem('prismaSession')) || null;
@@ -427,30 +427,74 @@
             if(!nombre || db.sucursales.some(s => s.nombre === nombre)) return mostrarAlerta("Nombre duplicado", "error");
             const nuevaSuc = { id: genID(), nombre: escapeHTML(nombre), inventario: {} };
             db.sucursales.push(nuevaSuc); guardarDB(); 
-            if(window.guardarSucursalEnNube) await window.guardarSucursalEnNube(nuevaSuc);
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("sucursales", nuevaSuc);
             e.target.reset(); mostrarAlerta("🏪 Sucursal creada y sincronizada"); 
         }
 
-        function agregarProveedor(e) { e.preventDefault(); db.proveedores.push({ id: genID(), nombre: escapeHTML(document.getElementById('provNombre').value.trim().toUpperCase()), doc: escapeHTML(document.getElementById('provDoc').value.trim()), tel: escapeHTML(document.getElementById('provTel').value.trim()), dir: escapeHTML(document.getElementById('provDir').value.trim().toUpperCase()) }); guardarDB(); e.target.reset(); mostrarAlerta("🏭 Proveedor registrado"); }
-        function registrarCompra(e) { e.preventDefault(); const idProv = document.getElementById('compraProveedor').value, idSuc = document.getElementById('compraDestino').value, idProd = document.getElementById('compraProducto').value, cant = parseInt(document.getElementById('compraCantidad').value); const prov = db.proveedores.find(p => p.id === idProv), prod = db.productos.find(p => p.id === idProd), suc = db.sucursales.find(s => s.id === idSuc); if(!prov || !prod || !suc) return mostrarAlerta("Error de datos", "error"); suc.inventario[idProd] = (suc.inventario[idProd] || 0) + cant; db.compras.unshift({ id: genID(), fecha: new Date().toLocaleString('es-PY'), proveedor: prov.nombre, sucursal: suc.nombre, producto: prod.nombre, cantidad: cant, costoTotal: prod.costo * cant }); guardarDB(); e.target.reset(); mostrarAlerta("📥 Compra registrada"); }
-        function registrarGasto(e) { e.preventDefault(); db.gastos.unshift({ id: genID(), fecha: new Date().toLocaleString('es-PY'), categoria: document.getElementById('gastoCategoria').value, detalle: escapeHTML(document.getElementById('gastoDetalle').value.trim().toUpperCase()), monto: parseFloat(document.getElementById('gastoMonto').value) }); guardarDB(); e.target.reset(); mostrarAlerta("💸 Gasto registrado"); }
-        function agregarCliente(e) { e.preventDefault(); db.clientes.push({ id: genID(), nombre: escapeHTML(document.getElementById('cliNombre').value.toUpperCase()), apellido: escapeHTML(document.getElementById('cliApellido').value.toUpperCase()), tipoDoc: document.getElementById('cliTipoDoc').value, doc: escapeHTML(document.getElementById('cliDoc').value), direccion: escapeHTML(document.getElementById('cliDireccion').value), condicion: document.getElementById('cliCondicion').value, deuda: 0 }); guardarDB(); e.target.reset(); mostrarAlerta("🤝 Cliente registrado"); }
-        function guardarClienteRapido(e) { e.preventDefault(); const id = genID(); db.clientes.push({ id, nombre: escapeHTML(document.getElementById('cliRapidoNombre').value.toUpperCase()), apellido: escapeHTML(document.getElementById('cliRapidoApellido').value.toUpperCase()), tipoDoc: 'Cedula', doc: escapeHTML(document.getElementById('cliRapidoDoc').value), direccion: 'S/D', condicion: 'Contado', deuda: 0 }); guardarDB(); document.getElementById('modalClienteRapido').classList.add('hidden'); document.getElementById('ventaCliente').value = id; mostrarAlerta("⚡ Cliente express guardado"); }
+        async function agregarProveedor(e) { 
+            e.preventDefault(); 
+            const nuevoProv = { id: genID(), nombre: escapeHTML(document.getElementById('provNombre').value.trim().toUpperCase()), doc: escapeHTML(document.getElementById('provDoc').value.trim()), tel: escapeHTML(document.getElementById('provTel').value.trim()), dir: escapeHTML(document.getElementById('provDir').value.trim().toUpperCase()) };
+            db.proveedores.push(nuevoProv); guardarDB(); 
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("proveedores", nuevoProv);
+            e.target.reset(); mostrarAlerta("🏭 Proveedor registrado"); 
+        }
+
+        async function registrarCompra(e) { 
+            e.preventDefault(); 
+            const idProv = document.getElementById('compraProveedor').value, idSuc = document.getElementById('compraDestino').value, idProd = document.getElementById('compraProducto').value, cant = parseInt(document.getElementById('compraCantidad').value); 
+            const prov = db.proveedores.find(p => p.id === idProv), prod = db.productos.find(p => p.id === idProd), suc = db.sucursales.find(s => s.id === idSuc); 
+            if(!prov || !prod || !suc) return mostrarAlerta("Error de datos", "error"); 
+            suc.inventario[idProd] = (suc.inventario[idProd] || 0) + cant; 
+            const nuevaCompra = { id: genID(), fecha: new Date().toLocaleString('es-PY'), proveedor: prov.nombre, sucursal: suc.nombre, producto: prod.nombre, cantidad: cant, costoTotal: prod.costo * cant };
+            db.compras.unshift(nuevaCompra); 
+            guardarDB(); 
+            if(window.guardarItemEnNube) {
+                await window.guardarItemEnNube("compras", nuevaCompra);
+                await window.guardarItemEnNube("sucursales", suc); // Actualizar stock de sucursal en nube
+            }
+            e.target.reset(); mostrarAlerta("📥 Compra registrada"); 
+        }
+
+        async function registrarGasto(e) { 
+            e.preventDefault(); 
+            const nuevoGasto = { id: genID(), fecha: new Date().toLocaleString('es-PY'), categoria: document.getElementById('gastoCategoria').value, detalle: escapeHTML(document.getElementById('gastoDetalle').value.trim().toUpperCase()), monto: parseFloat(document.getElementById('gastoMonto').value) };
+            db.gastos.unshift(nuevoGasto); guardarDB(); 
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("gastos", nuevoGasto);
+            e.target.reset(); mostrarAlerta("💸 Gasto registrado"); 
+        }
+
+        async function agregarCliente(e) { 
+            e.preventDefault(); 
+            const nuevoCli = { id: genID(), nombre: escapeHTML(document.getElementById('cliNombre').value.toUpperCase()), apellido: escapeHTML(document.getElementById('cliApellido').value.toUpperCase()), tipoDoc: document.getElementById('cliTipoDoc').value, doc: escapeHTML(document.getElementById('cliDoc').value), direccion: escapeHTML(document.getElementById('cliDireccion').value), condicion: document.getElementById('cliCondicion').value, deuda: 0 };
+            db.clientes.push(nuevoCli); guardarDB(); 
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("clientes", nuevoCli);
+            e.target.reset(); mostrarAlerta("🤝 Cliente registrado"); 
+        }
+
+        async function guardarClienteRapido(e) { 
+            e.preventDefault(); const id = genID(); 
+            const nuevoCli = { id, nombre: escapeHTML(document.getElementById('cliRapidoNombre').value.toUpperCase()), apellido: escapeHTML(document.getElementById('cliRapidoApellido').value.toUpperCase()), tipoDoc: 'Cedula', doc: escapeHTML(document.getElementById('cliRapidoDoc').value), direccion: 'S/D', condicion: 'Contado', deuda: 0 };
+            db.clientes.push(nuevoCli); guardarDB(); 
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("clientes", nuevoCli);
+            document.getElementById('modalClienteRapido').classList.add('hidden'); document.getElementById('ventaCliente').value = id; mostrarAlerta("⚡ Cliente express guardado"); 
+        }
         
         async function agregarEmpleado(e) { 
             e.preventDefault(); const pin = document.getElementById('empPin').value;
             if(pin === '0000' || db.empleados.some(emp => emp.pin === pin)) return mostrarAlerta("❌ PIN Inválido o duplicado", "error");
             const nuevoEmp = { id: genID(), nombre: escapeHTML(document.getElementById('empNombre').value.trim()), apellido: escapeHTML(document.getElementById('empApellido').value.trim()), tipoDoc: 'Cedula', doc: escapeHTML(document.getElementById('empDoc').value), domicilio: escapeHTML(document.getElementById('empDomicilio').value), idSuc: document.getElementById('empSucursal').value, rol: document.getElementById('empRol').value, pin: pin, comision: parseFloat(document.getElementById('empComision').value) || 0, ventasTotal: 0, comisionAcumulada: 0 };
-            db.empleados.push(nuevoEmp); 
-            guardarDB(); 
-            if(window.guardarEmpleadoEnNube) await window.guardarEmpleadoEnNube(nuevoEmp);
-            e.target.reset(); 
-            mostrarAlerta("👥 Empleado registrado y sincronizado"); 
+            db.empleados.push(nuevoEmp); guardarDB(); 
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("empleados", nuevoEmp);
+            e.target.reset(); mostrarAlerta("👥 Empleado registrado y sincronizado"); 
         }
-        function agregarProducto(e) {
+
+        async function agregarProducto(e) {
             e.preventDefault(); const c = parseFloat(document.getElementById('prodCosto').value), v = parseFloat(document.getElementById('prodPrecio').value);
             if(c > v) return mostrarAlerta("❌ Alerta de Quiebra: Costo superior al precio", "error");
-            db.productos.push({ id: genID(), qrCode: genID(), nombre: escapeHTML(document.getElementById('prodNombre').value.toUpperCase()), costo: c, precio: v, stock: 0 }); guardarDB(); e.target.reset(); mostrarAlerta("📦 Producto creado");
+            const nuevoProd = { id: genID(), qrCode: genID(), nombre: escapeHTML(document.getElementById('prodNombre').value.toUpperCase()), costo: c, precio: v, stock: 0 };
+            db.productos.push(nuevoProd); guardarDB(); 
+            if(window.guardarItemEnNube) await window.guardarItemEnNube("productos", nuevoProd);
+            e.target.reset(); mostrarAlerta("📦 Producto creado");
         }
 
         function actualizarProductosVenta() {
@@ -464,7 +508,7 @@
             if(inputTotal) inputTotal.value = p ? formatoGs(p.precio * cant) : 'Gs. 0';
         }
 
-        window.cobrarDeuda = function(id) {
+        window.cobrarDeuda = async function(id) {
             const cli = db.clientes.find(c => c.id === id); if(!cli || cli.deuda <= 0) return;
             const monto = prompt(`Cobro de Deuda para ${cli.nombre} (Total: ${formatoGs(cli.deuda)}). Ingrese monto a abonar (Gs):`, cli.deuda);
             if(monto && !isNaN(monto) && parseFloat(monto) > 0) {
@@ -472,6 +516,7 @@
                 const nuevaCobranza = { id: genID(), fecha: new Date().toLocaleString('es-PY'), nombreSuc: 'COBRANZA CENTRAL', vendedor: usuarioActual.nombre, nombreCliente: `${cli.nombre} ${cli.apellido}`, nombreProd: 'PAGO DE CUENTA CORRIENTE', cant: 1, total: pago, pago: 'Efectivo', esCobroDeuda: true };
                 db.ventas.unshift(nuevaCobranza); guardarDB(); 
                 if(window.guardarVentaEnNube) window.guardarVentaEnNube(nuevaCobranza);
+                if(window.guardarItemEnNube) window.guardarItemEnNube("clientes", cli); // Actualizar deuda de cliente
                 mostrarAlerta(`💰 Cobro exitoso: ${formatoGs(pago)}`);
             }
         };
@@ -481,16 +526,33 @@
             if(suc) { for(let pId in suc.inventario) { if(suc.inventario[pId] > 0) { const p = db.productos.find(x => x.id === pId); if(p) opts += `<option value="${p.id}">${p.nombre} (Disp: ${suc.inventario[pId]})</option>`; } } }
             sel.innerHTML = opts || '<option value="">Sin stock en origen</option>';
         }
-        function crearTraslado(e) {
+
+        async function crearTraslado(e) {
             e.preventDefault(); const origen = document.getElementById('trasOrigen').value, destino = document.getElementById('trasDestino').value, prod = document.getElementById('trasProducto').value, cant = parseInt(document.getElementById('trasCantidad').value);
             if(origen === destino) return mostrarAlerta("Origen y Destino no pueden ser iguales", "error");
             const sOrig = db.sucursales.find(s => s.id === origen); if(!sOrig || !sOrig.inventario[prod] || sOrig.inventario[prod] < cant) return mostrarAlerta("Stock insuficiente en origen", "error");
-            sOrig.inventario[prod] -= cant; db.traslados.push({ id: genID(), origen, destino, idProd: prod, cant, estado: 'En Tránsito', fecha: new Date().toLocaleString('es-PY') }); guardarDB(); e.target.reset(); actualizarProductosTraslado(); mostrarAlerta("🚚 Envío en tránsito");
+            sOrig.inventario[prod] -= cant; 
+            const nuevoTraslado = { id: genID(), origen, destino, idProd: prod, cant, estado: 'En Tránsito', fecha: new Date().toLocaleString('es-PY') };
+            db.traslados.push(nuevoTraslado); 
+            guardarDB(); 
+            if(window.guardarItemEnNube) {
+                await window.guardarItemEnNube("traslados", nuevoTraslado);
+                await window.guardarItemEnNube("sucursales", sOrig);
+            }
+            e.target.reset(); actualizarProductosTraslado(); mostrarAlerta("🚚 Envío en tránsito");
         }
-        window.recibirTraslado = function(id) {
+
+        window.recibirTraslado = async function(id) {
             const t = db.traslados.find(x => x.id === id); if(!t) return;
-            const sDest = db.sucursales.find(s => s.id === t.destino); if(sDest) sDest.inventario[t.idProd] = (sDest.inventario[t.idProd] || 0) + t.cant;
-            t.estado = 'Recibido'; guardarDB(); mostrarAlerta("✅ Stock recibido en destino");
+            const sDest = db.sucursales.find(s => s.id === t.destino); 
+            if(sDest) sDest.inventario[t.idProd] = (sDest.inventario[t.idProd] || 0) + t.cant;
+            t.estado = 'Recibido'; 
+            guardarDB(); 
+            if(window.guardarItemEnNube) {
+                await window.guardarItemEnNube("traslados", t);
+                await window.guardarItemEnNube("sucursales", sDest);
+            }
+            mostrarAlerta("✅ Stock recibido en destino");
         }
 
         function actualizarVendedoresSucursal() {
@@ -537,7 +599,11 @@
             }
 
             suc.inventario[v.idProd] -= v.cant;
-            if(v.pago === 'Credito') db.clientes.find(c => c.id === v.idCliente).deuda += v.total;
+            let cliObj = null;
+            if(v.pago === 'Credito') {
+                cliObj = db.clientes.find(c => c.id === v.idCliente);
+                if(cliObj) cliObj.deuda += v.total;
+            }
             const emp = db.empleados.find(e => e.id === v.idVendedor);
             if(emp) { emp.ventasTotal += v.total; emp.comisionAcumulada += v.total * (emp.comision / 100); }
             
@@ -545,7 +611,11 @@
             db.ventas.unshift(nuevaVenta);
             guardarDB(); 
             
-            if (window.guardarVentaEnNube) window.guardarVentaEnNube(nuevaVenta);
+            if (window.guardarVentaEnNube) {
+                window.guardarVentaEnNube(nuevaVenta);
+                window.guardarItemEnNube("sucursales", suc);
+                if(cliObj) window.guardarItemEnNube("clientes", cliObj);
+            }
 
             cerrarModalTicket(); resetFormularioPOS(); mostrarAlerta("💎 Venta Emitida");
         }
@@ -553,8 +623,27 @@
         function actualizarListaEnVivoPOS() { document.getElementById('listaEnVivoPos').innerHTML = db.ventas.slice(0, 4).map(v => `<div class="bg-white p-3 rounded-xl border border-slate-100 flex justify-between items-center text-xs shadow-sm"><div><b class="text-indigo-600">${v.fecha.split(',')[1]}</b> - ${v.cant}x ${v.nombreProd}</div><b class="text-green-600">${formatoGs(v.total)}</b></div>`).join('') || '<p class="text-xs text-slate-400">Esperando caja...</p>'; }
 
         // --- CAJA ---
-        function abrirCaja(e) { e.preventDefault(); const id = document.getElementById('cajaSucursalApertura').value, m = parseFloat(document.getElementById('cajaMontoApertura').value), hoy = new Date().toLocaleDateString('es-PY'); db.caja[id] = { estado: 'abierta', fechaAbierta: hoy, montoInicial: m, historial: db.caja[id]?.historial || [] }; guardarDB(); mostrarAlerta("💵 Caja Abierta"); verificarEstadoCajaPOS(); }
-        function prepararDepositoCierre(e) { e.preventDefault(); const id = document.getElementById('cajaSucursalCierre').value, dep = parseFloat(document.getElementById('cajaMontoDeposito').value); db.caja[id].estado = 'cerrada'; db.caja[id].historial.unshift({ id: genID(), fecha: new Date().toLocaleString('es-PY'), deposito: dep }); guardarDB(); mostrarAlerta("🏦 Cierre registrado"); verificarEstadoCajaPOS(); }
+        async function abrirCaja(e) { 
+            e.preventDefault(); const id = document.getElementById('cajaSucursalApertura').value, m = parseFloat(document.getElementById('cajaMontoApertura').value), hoy = new Date().toLocaleDateString('es-PY'); 
+            db.caja[id] = { estado: 'abierta', fechaAbierta: hoy, montoInicial: m, historial: db.caja[id]?.historial || [] }; 
+            guardarDB(); 
+            if(window.guardarItemEnNube) {
+                await window.guardarItemEnNube("caja_global", { id: "caja_estado", data: db.caja });
+            }
+            mostrarAlerta("💵 Caja Abierta"); verificarEstadoCajaPOS(); 
+        }
+
+        async function prepararDepositoCierre(e) { 
+            e.preventDefault(); const id = document.getElementById('cajaSucursalCierre').value, dep = parseFloat(document.getElementById('cajaMontoDeposito').value); 
+            db.caja[id].estado = 'cerrada'; 
+            db.caja[id].historial.unshift({ id: genID(), fecha: new Date().toLocaleString('es-PY'), deposito: dep }); 
+            guardarDB(); 
+            if(window.guardarItemEnNube) {
+                await window.guardarItemEnNube("caja_global", { id: "caja_estado", data: db.caja });
+            }
+            mostrarAlerta("🏦 Cierre registrado"); verificarEstadoCajaPOS(); 
+        }
+
         function verificarEfectivoCaja() { const id = document.getElementById('cajaSucursalCierre')?.value; if(!id) return; const c = db.caja[id]; if(!c || c.estado !== 'abierta') { document.getElementById('lblEfectivoVentas').innerText = "CERRADA"; return; } let ef = 0; db.ventas.filter(v => v.idSuc === id && v.pago === 'Efectivo' && v.fecha.includes(new Date().toLocaleDateString('es-PY'))).forEach(v => ef += v.total); document.getElementById('lblEfectivoVentas').innerText = formatoGs(ef + c.montoInicial); }
         function verificarEstadoCajaPOS() { const id = document.getElementById('ventaSucursal')?.value, b = document.getElementById('estadoCajaBadge'), btn = document.getElementById('btnCobrar'); if(!id || !b) return; const c = db.caja[id], hoy = new Date().toLocaleDateString('es-PY'); if(c && c.estado === 'abierta' && c.fechaAbierta === hoy) { b.className = "px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700"; b.innerText = "CAJA ABIERTA"; btn.disabled = false; } else { b.className = "px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700"; b.innerText = "CAJA CERRADA"; btn.disabled = true; } }
 
@@ -661,8 +750,8 @@
                 }
             }
             guardarDB(); 
-            if(tabla === 'empleados' && window.guardarEmpleadoEnNube) {
-                await window.guardarEmpleadoEnNube(itemRef);
+            if(window.guardarItemEnNube) {
+                await window.guardarItemEnNube(tabla, itemRef);
             }
             cerrarEditor(); 
             mostrarAlerta("✅ Registro editado y sincronizado");
@@ -676,7 +765,7 @@
         if(!sessionStorage.getItem('prismaSession')) document.getElementById('modalLogin').classList.remove('hidden'); else render();
     </script>
 
-    <!-- MÓDULO FIREBASE (Con onSnapshot para Tiempo Real) -->
+    <!-- MÓDULO FIREBASE (Sincronización Universal en Vivo para todos los Módulos) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, doc, setDoc, getDocs, writeBatch, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
@@ -694,100 +783,64 @@
         const app = initializeApp(firebaseConfig);
         const dbCloud = getFirestore(app);
 
-        // 📡 Escucha en tiempo real de empleados para actualizar PINes en celulares al instante
-        onSnapshot(collection(dbCloud, "empleados"), (snapshot) => {
-            if (!snapshot.empty) {
-                const empleadosNube = snapshot.docs.map(doc => doc.data());
-                if (window.recibirEmpleadosNube) {
-                    window.recibirEmpleadosNube(empleadosNube);
+        // 📡 ESCUCHADORES UNIVERSALES EN TIEMPO REAL (Para que cualquier dispositivo actualice todo)
+        const modulosAEscuchar = ["empleados", "productos", "sucursales", "proveedores", "clientes", "compras", "gastos", "traslados", "ventas"];
+        
+        modulosAEscuchar.forEach(modulo => {
+            onSnapshot(collection(dbCloud, modulo), (snapshot) => {
+                let listaNube = [];
+                snapshot.forEach(doc => {
+                    listaNube.push(doc.data());
+                });
+
+                if (listaNube.length > 0) {
+                    // Si es ventas o compras, ordenarlas o manejarlas de forma acumulativa
+                    if (modulo === "ventas" || modulo === "compras" || modulo === "gastos" || modulo === "traslados") {
+                        db[modulo] = listaNube.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+                    } else {
+                        db[modulo] = listaNube;
+                    }
+                    
+                    localStorage.setItem('puntoPrismaDB_v17', JSON.stringify(db));
+                    if(typeof render === 'function') render();
+                }
+            });
+        });
+
+        // Escucha específica para el estado de caja
+        onSnapshot(doc(dbCloud, "caja_global", "caja_estado"), (docSnap) => {
+            if (docSnap.exists()) {
+                const cajaRemota = docSnap.data().data;
+                if (cajaRemota) {
+                    db.caja = cajaRemota;
+                    localStorage.setItem('puntoPrismaDB_v17', JSON.stringify(db));
+                    if(document.getElementById('caja') && document.getElementById('caja').classList.contains('activa')) {
+                        verificarEfectivoCaja();
+                    }
                 }
             }
         });
 
-        // 📡 NUEVO: Listener de Ventas en Vivo
-        window.iniciarEscuchaEnVivo = function() {
-            if (!usuarioActual) return;
-            
-            // Suscribirse a la colección 'ventas' de Firebase
-            onSnapshot(collection(dbCloud, "ventas"), (snapshot) => {
-                let huboCambios = false;
-                snapshot.docChanges().forEach((change) => {
-                    // Si Firebase detecta un nuevo registro (hecho por ti o un empleado)
-                    if (change.type === "added") {
-                        const data = change.doc.data();
-                        
-                        // Validar que la venta no exista ya localmente para evitar duplicados
-                        if (!db.ventas.some(v => v.id === data.id)) {
-                            db.ventas.unshift(data); // Agregar arriba del historial
-                            huboCambios = true;
-                        }
-                    }
-                });
-
-                if (huboCambios) {
-                    localStorage.setItem('puntoPrismaDB_v17', JSON.stringify(db));
-                    
-                    // Actualizar las métricas visuales instantáneamente si el usuario administrador las está viendo
-                    if (document.getElementById('informes') && document.getElementById('informes').classList.contains('activa')) {
-                        generarInformesGerenciales();
-                    }
-                    if (document.getElementById('caja') && document.getElementById('caja').classList.contains('activa')) {
-                        verificarEfectivoCaja();
-                    }
-                    if (document.getElementById('ventas') && document.getElementById('ventas').classList.contains('activa')) {
-                        actualizarListaEnVivoPOS();
-                    }
-                }
-            });
+        // 📝 Función universal para enviar cualquier cambio a la nube al instante
+        window.guardarItemEnNube = async function(nombreTabla, objetoItem) {
+            try {
+                const ref = doc(dbCloud, nombreTabla, objetoItem.id);
+                await setDoc(ref, objetoItem);
+            } catch (error) {
+                console.error(`Fallo al guardar en ${nombreTabla}:`, error);
+            }
         };
 
-        // 📝 MODIFICADO: Guardar Venta unificada para activar el listener
         window.guardarVentaEnNube = async function(ventaPlana) {
             try {
-                const batch = writeBatch(dbCloud);
-                // Usamos la colección "ventas" unificada para que el listener (onSnapshot) lea la misma estructura
                 const refVenta = doc(dbCloud, "ventas", ventaPlana.id);
-                batch.set(refVenta, ventaPlana);
-
-                await batch.commit();
+                await setDoc(refVenta, ventaPlana);
             } catch (error) {
-                console.error("Fallo al guardar venta en la nube:", error);
-                mostrarAlerta("❌ Error de sincronización", "error");
+                console.error("Fallo al guardar venta:", error);
             }
         };
 
-        window.guardarEmpleadoEnNube = async function(empleado) {
-            try {
-                const ref = doc(dbCloud, "empleados", empleado.id);
-                await setDoc(ref, empleado);
-            } catch (error) {
-                console.error("Fallo al guardar empleado:", error);
-            }
-        };
-
-        // Funciones anteriores (Carga inicial y sincronización masiva)
-        window.inicializarNubePorPrimeraVez = async function() {
-            mostrarAlerta("Construyendo Base de Datos...", "info");
-            try {
-                const batch = writeBatch(dbCloud);
-                mockDataPrueba.productos.forEach(prod => batch.set(doc(dbCloud, "productos", prod.id), prod));
-                mockDataPrueba.sucursales.forEach(suc => batch.set(doc(dbCloud, "sucursales", suc.id), suc));
-                await batch.commit(); mostrarAlerta("✅ BD Creada"); cargarDatosDesdeNube();
-            } catch (error) { mostrarAlerta("❌ Error BD", "error"); }
-        };
-
-        window.cargarDatosDesdeNube = async function() {
-            try {
-                const queryProductos = await getDocs(collection(dbCloud, "productos")); window.db.productos = queryProductos.docs.map(d => d.data());
-                const querySucursales = await getDocs(collection(dbCloud, "sucursales")); window.db.sucursales = querySucursales.docs.map(d => d.data());
-                render(); 
-            } catch (error) { console.error("Error nube:", error); }
-        };
-
-        window.guardarSucursalEnNube = async function(sucursal) {
-            try { await setDoc(doc(dbCloud, "sucursales", sucursal.id), sucursal); } catch (e) { console.error(e); }
-        };
-
+        // Sincronización general inicial por si hay datos vacíos
         window.sincronizarTodoEnNube = async function() {
             try {
                 const batch = writeBatch(dbCloud);
@@ -801,6 +854,7 @@
                 db.ventas.forEach(v => batch.set(doc(dbCloud, "ventas", v.id), v));
                 db.traslados.forEach(t => batch.set(doc(dbCloud, "traslados", t.id), t));
                 batch.set(doc(dbCloud, "config", "general"), db.config);
+                batch.set(doc(dbCloud, "caja_global", "caja_estado"), { data: db.caja });
                 await batch.commit();
             } catch (error) { console.error("Error sync:", error); }
         };
