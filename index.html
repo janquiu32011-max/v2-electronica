@@ -327,6 +327,13 @@
 
         let db = JSON.parse(localStorage.getItem('puntoPrismaDB_v17')) || mockDataPrueba;
         if (!db.config) db.config = { masterPin: '0000' };
+
+        // 🔗 Canal receptor de empleados en tiempo real desde Firebase
+        window.recibirEmpleadosNube = function(empleadosActualizados) {
+            db.empleados = empleadosActualizados;
+            localStorage.setItem('puntoPrismaDB_v17', JSON.stringify(db));
+            if(document.getElementById('listaEmpleados')) render();
+        };
         
         let usuarioActual = JSON.parse(sessionStorage.getItem('prismaSession')) || null;
         let html5QrCode = null;
@@ -430,10 +437,15 @@
         function agregarCliente(e) { e.preventDefault(); db.clientes.push({ id: genID(), nombre: escapeHTML(document.getElementById('cliNombre').value.toUpperCase()), apellido: escapeHTML(document.getElementById('cliApellido').value.toUpperCase()), tipoDoc: document.getElementById('cliTipoDoc').value, doc: escapeHTML(document.getElementById('cliDoc').value), direccion: escapeHTML(document.getElementById('cliDireccion').value), condicion: document.getElementById('cliCondicion').value, deuda: 0 }); guardarDB(); e.target.reset(); mostrarAlerta("🤝 Cliente registrado"); }
         function guardarClienteRapido(e) { e.preventDefault(); const id = genID(); db.clientes.push({ id, nombre: escapeHTML(document.getElementById('cliRapidoNombre').value.toUpperCase()), apellido: escapeHTML(document.getElementById('cliRapidoApellido').value.toUpperCase()), tipoDoc: 'Cedula', doc: escapeHTML(document.getElementById('cliRapidoDoc').value), direccion: 'S/D', condicion: 'Contado', deuda: 0 }); guardarDB(); document.getElementById('modalClienteRapido').classList.add('hidden'); document.getElementById('ventaCliente').value = id; mostrarAlerta("⚡ Cliente express guardado"); }
         
-        function agregarEmpleado(e) { 
+        async function agregarEmpleado(e) { 
             e.preventDefault(); const pin = document.getElementById('empPin').value;
             if(pin === '0000' || db.empleados.some(emp => emp.pin === pin)) return mostrarAlerta("❌ PIN Inválido o duplicado", "error");
-            db.empleados.push({ id: genID(), nombre: escapeHTML(document.getElementById('empNombre').value.trim()), apellido: escapeHTML(document.getElementById('empApellido').value.trim()), tipoDoc: 'Cedula', doc: escapeHTML(document.getElementById('empDoc').value), domicilio: escapeHTML(document.getElementById('empDomicilio').value), idSuc: document.getElementById('empSucursal').value, rol: document.getElementById('empRol').value, pin: pin, comision: parseFloat(document.getElementById('empComision').value) || 0, ventasTotal: 0, comisionAcumulada: 0 }); guardarDB(); e.target.reset(); mostrarAlerta("👥 Empleado registrado"); 
+            const nuevoEmp = { id: genID(), nombre: escapeHTML(document.getElementById('empNombre').value.trim()), apellido: escapeHTML(document.getElementById('empApellido').value.trim()), tipoDoc: 'Cedula', doc: escapeHTML(document.getElementById('empDoc').value), domicilio: escapeHTML(document.getElementById('empDomicilio').value), idSuc: document.getElementById('empSucursal').value, rol: document.getElementById('empRol').value, pin: pin, comision: parseFloat(document.getElementById('empComision').value) || 0, ventasTotal: 0, comisionAcumulada: 0 };
+            db.empleados.push(nuevoEmp); 
+            guardarDB(); 
+            if(window.guardarEmpleadoEnNube) await window.guardarEmpleadoEnNube(nuevoEmp);
+            e.target.reset(); 
+            mostrarAlerta("👥 Empleado registrado y sincronizado"); 
         }
         function agregarProducto(e) {
             e.preventDefault(); const c = parseFloat(document.getElementById('prodCosto').value), v = parseFloat(document.getElementById('prodPrecio').value);
@@ -638,7 +650,7 @@
             document.getElementById('formEditorUniversal').innerHTML = htmlForm; document.getElementById('modalEditorUniversal').classList.remove('hidden');
         };
         window.cerrarEditor = function() { document.getElementById('modalEditorUniversal').classList.add('hidden'); itemEnEdicion = null; };
-        window.guardarEdicion = function(e) {
+        window.guardarEdicion = async function(e) {
             if(e) e.preventDefault(); if(!itemEnEdicion) return;
             const { tabla, id, itemOriginal } = itemEnEdicion; const itemRef = db[tabla].find(x => x.id === id);
             for (let key in itemOriginal) {
@@ -648,7 +660,12 @@
                     if (key === 'idSuc' || key === 'rol') { itemRef[key] = valor; } else if (typeof valor === 'string') { itemRef[key] = valor.toUpperCase(); } else { itemRef[key] = valor; }
                 }
             }
-            guardarDB(); cerrarEditor(); mostrarAlerta("✅ Registro editado");
+            guardarDB(); 
+            if(tabla === 'empleados' && window.guardarEmpleadoEnNube) {
+                await window.guardarEmpleadoEnNube(itemRef);
+            }
+            cerrarEditor(); 
+            mostrarAlerta("✅ Registro editado y sincronizado");
         };
 
         // --- SCANNER CAM ---
@@ -676,6 +693,16 @@
 
         const app = initializeApp(firebaseConfig);
         const dbCloud = getFirestore(app);
+
+        // 📡 Escucha en tiempo real de empleados para actualizar PINes en celulares al instante
+        onSnapshot(collection(dbCloud, "empleados"), (snapshot) => {
+            if (!snapshot.empty) {
+                const empleadosNube = snapshot.docs.map(doc => doc.data());
+                if (window.recibirEmpleadosNube) {
+                    window.recibirEmpleadosNube(empleadosNube);
+                }
+            }
+        });
 
         // 📡 NUEVO: Listener de Ventas en Vivo
         window.iniciarEscuchaEnVivo = function() {
@@ -726,6 +753,15 @@
             } catch (error) {
                 console.error("Fallo al guardar venta en la nube:", error);
                 mostrarAlerta("❌ Error de sincronización", "error");
+            }
+        };
+
+        window.guardarEmpleadoEnNube = async function(empleado) {
+            try {
+                const ref = doc(dbCloud, "empleados", empleado.id);
+                await setDoc(ref, empleado);
+            } catch (error) {
+                console.error("Fallo al guardar empleado:", error);
             }
         };
 
